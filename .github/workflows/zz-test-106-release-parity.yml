@@ -1,0 +1,104 @@
+name: zz Test 106 Release Parity
+
+# FORK-ONLY TEST WORKFLOW — never merge into origin.
+# A/B test for issue #106: runs the OLD softprops/action-gh-release step and
+# the NEW gh release create step (extracted verbatim from the modified
+# release-package.yml) with identical inputs and fixtures, creating two
+# prereleases on this fork so the resulting release objects can be diffed.
+# Test artifacts use zz-parity-*/ tags and are deleted after verification.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zz-test-106
+  cancel-in-progress: false
+
+jobs:
+  new-way:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # creates the test release
+    env:
+      PACKAGE_NAME: zz-parity-new
+      VERSION: 0.0.0-test106
+      IS_PRERELEASE: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Create dist fixtures and release notes
+        run: |
+          mkdir -p dist
+          echo "fake wheel for parity test" > "dist/zz_parity_new-0.0.0-py3-none-any.whl"
+          echo "fake sdist for parity test" > "dist/zz_parity_new-0.0.0.tar.gz"
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          echo "# Parity test notes" > release_notes.md
+          echo "Same body for both jobs." >> release_notes.md
+
+      # Run the exact step body from the modified release-package.yml —
+      # extracted at runtime so this test cannot drift from the real change.
+      - name: Create GitHub Release (new way — extracted verbatim)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          VERSION: ${{ env.VERSION }}
+          CHANGELOG_FILE: release_notes.md
+          IS_PRERELEASE: ${{ env.IS_PRERELEASE }}
+        run: |
+          set -euo pipefail
+          STEP_SCRIPT=$(python3 - <<'PY'
+          import yaml
+          wf = yaml.safe_load(open('.github/workflows/release-package.yml'))
+          step = [s for s in wf['jobs']['create-release']['steps']
+                  if s['name'] == 'Create GitHub Release'][0]
+          print(step['run'])
+          PY
+          )
+          eval "$STEP_SCRIPT"
+
+  old-way:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # creates the test release
+    env:
+      PACKAGE_NAME: zz-parity-old
+      VERSION: 0.0.0-test106
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Create dist fixtures and release notes
+        run: |
+          mkdir -p dist
+          echo "fake wheel for parity test" > "dist/zz_parity_old-0.0.0-py3-none-any.whl"
+          echo "fake sdist for parity test" > "dist/zz_parity_old-0.0.0.tar.gz"
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+          echo "# Parity test notes" > release_notes.md
+          echo "Same body for both jobs." >> release_notes.md
+
+      # The exact step as it exists on origin/main, same pinned SHA and inputs.
+      - name: Create GitHub Release (old way — as on main)
+        env:
+          PACKAGE_NAME: ${{ env.PACKAGE_NAME }}
+          VERSION: ${{ env.VERSION }}
+          CHANGELOG_FILE: release_notes.md
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          tag_name: ${{ env.PACKAGE_NAME }}/v${{ env.VERSION }}
+          name: ${{ env.PACKAGE_NAME }} v${{ env.VERSION }}
+          body_path: ${{ env.CHANGELOG_FILE }}
+          draft: false
+          prerelease: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
